@@ -1,0 +1,7 @@
+service_account.json
+state/
+__pycache__/
+*.pyc
+venv/
+.env
+run.log
