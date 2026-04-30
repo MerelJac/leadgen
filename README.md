@@ -2,6 +2,16 @@
 
 Daily-runnable pipeline that finds nonprofits / B Corps / civic orgs / community foundations, grades their websites, finds decision-makers, drafts outreach, and appends to your Google Sheet.
 
+## Commands to run
+- load .env
+```
+set -a; source .env; set +a  
+```
+- run script
+```
+python lead_gen.py   
+```
+
 ## What the script does
 
 1. **Searches** with DuckDuckGo (free, no API key) using your category keywords.

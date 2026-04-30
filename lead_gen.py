@@ -47,11 +47,11 @@ STATE_DIR.mkdir(exist_ok=True)
 
 CONFIG = {
     # Hard daily spend cap in USD. Script aborts mid-run if hit.
-    "DAILY_BUDGET_USD": float(os.environ.get("DAILY_BUDGET_USD", "0.25")),
+    "DAILY_BUDGET_USD": float(os.environ.get("DAILY_BUDGET_USD", ".50")),
 
     # Claude Haiku 4.5 pricing per million tokens (verified Apr 2026)
     "PRICE_INPUT_PER_M": 1.00,
-    "PRICE_OUTPUT_PER_M": 2.00,
+    "PRICE_OUTPUT_PER_M": 1.00,
     "MODEL": "claude-haiku-4-5",
 
     # How many search queries to run, and results per query
@@ -70,6 +70,12 @@ CONFIG = {
     "WORKSHEET_NAME": "Leads",
     "SERVICE_ACCOUNT_FILE": os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE",
                                             str(ROOT / "service_account.json")),
+
+    # Sender identity — used in every outreach message.
+    # Edit these to change how you introduce yourself.
+    "SENDER_NAME": "Merel",
+    "SENDER_COMPANY": "Loopdash",
+    "SENDER_ROLE": "developer",
 }
 
 # These columns are owned by the script. Editing them in the sheet may be
@@ -594,21 +600,101 @@ def claude_classify_and_draft(
 
     h_tier, h_reason = heuristic_result
 
+    sender_name = CONFIG["SENDER_NAME"]
+    sender_company = CONFIG["SENDER_COMPANY"]
+    sender_role = CONFIG["SENDER_ROLE"]
+
     system = (
         "You evaluate websites of mission-driven organizations for a B2B "
         "outreach pipeline. You output ONLY valid JSON with these keys: "
         "partisan (bool), tier ('1', '2', or 'DISQUALIFY'), reason (string, "
         "one sentence), suggested_offer (string, one short phrase), "
-        "outreach_message (string, 80-130 words, warm and specific to the "
-        "org, no fake compliments, no generic intros, no emojis). "
+        "outreach_message (string). "
         "Tier 1 = website rebuild (outdated, not mobile, slow, stale). "
         "Tier 2 = modern site, offer software/automation OR a branded mini-game "
         "engagement tool. DISQUALIFY = partisan/political affiliation, "
         "or extremely recently rebuilt site. "
         "Be skeptical: only mark partisan if there's clear evidence of party "
         "affiliation, candidate endorsement, or campaign work. Civic engagement, "
-        "voter education, and policy advocacy alone are NOT partisan."
+        "voter education, and policy advocacy alone are NOT partisan.\n\n"
+        f"OUTREACH MESSAGE — write a SHORT, warm cold opener from "
+        f"{sender_name} at {sender_company} (a {sender_role}). Always end "
+        f"with a sign-off on its own line: '{sender_name}'.\n\n"
+        "Hard rules (apply to BOTH structures):\n"
+        "  - Friendly and direct. A peer reaching out, not a salesperson.\n"
+        "  - NO meeting ask. NO 'open to a quick call'. The question IS the CTA.\n"
+        "  - NO compliments ('great work', 'impressive mission'). Observation only.\n"
+        "  - NO corporate adjectives ('innovative', 'cutting-edge', 'leverage', "
+        "'synergy', 'streamline', 'empower'). Plain words.\n"
+        "  - NO emojis. NO email throat-clearing ('I hope this finds you well').\n"
+        "  - Use the decision maker's first name if known, else 'Hi there' "
+        "(or just 'Hi —' for Structure B).\n"
+        "  - Contractions are good (I'm, we're, you've). Slight informality "
+        "is good.\n"
+        f"  - Always sign off with '{sender_name}' on its own final line."
     )
+
+    # Two distinct outreach structures, chosen by tier.
+    if h_tier == "1":
+        # STRUCTURE A — Tier 1: site needs work. Lead with observation about
+        # their mission, intro yourself, name a specific weakness softly, ask
+        # if it's a real pain point.
+        structure_block = f"""STRUCTURE A (use this — site is Tier 1, needs improvement):
+
+  BEAT 1 — Greeting + ONE specific observation about how the org's
+           audience uses something on their site (e.g. "I've been looking
+           at how nonprofits use tools like X for research"). Neutral
+           observation, not a compliment.
+  BEAT 2 — Brief intro: "I'm a {sender_role} with {sender_company}"
+  BEAT 3 — Soft offer naming ONE specific weakness from the heuristic
+           reason. Use "we might be able to help improve your site,
+           especially [the specific weakness]". Pick ONE — mobile
+           performance, load speed, findability, dated design — based on
+           the heuristic reason. Don't list multiple.
+  BEAT 4 — Question: "Is that something you struggle with?" or "Is that
+           something you've been thinking about?"
+  BEAT 5 — "Hope to connect!" then "{sender_name}" on its own line.
+
+Length: 55-80 words including sign-off.
+
+Reference example (this exact tone, length, structure is the target):
+\"\"\"
+Hi Lauren, I've been looking at how nonprofits use tools like Foundation
+Directory for research.
+I'm a developer with {sender_company} and we might be able to help
+improve your site, especially as it performs on mobile. Is that something
+you struggle with?
+Hope to connect!
+{sender_name}
+\"\"\""""
+    else:
+        # STRUCTURE B — Tier 2: site is modern. Don't pitch a rebuild.
+        # Compliment honestly, mention a few things you noticed, offer to
+        # share — low-commitment ask.
+        structure_block = f"""STRUCTURE B (use this — site is Tier 2, modern and good):
+
+  BEAT 1 — Casual greeting: "Hi —" or "Hi {{first name}} —"
+  BEAT 2 — Intro + reference to their site:
+           "I'm a {sender_role} with {sender_company} and came across
+           [Org]'s site."
+  BEAT 3 — Honest assessment + tease of something specific:
+           "Overall solid, but there are a few things that might be making
+           [coordination / engagement / member experience / donor flow]
+           harder than it needs to be." Pick the right noun based on what
+           the org actually does (from the site excerpt).
+  BEAT 4 — Low-commitment ask: "Want me to share what I noticed?"
+  BEAT 5 — "{sender_name}" on its own line.
+
+Length: 40-60 words including sign-off.
+
+Reference example (this exact tone, length, structure is the target):
+\"\"\"
+Hi — I'm a {sender_role} with {sender_company} and came across ASE's site.
+Overall solid, but there are a few things that might be making
+coordination harder than it needs to be.
+Want me to share what I noticed?
+{sender_name}
+\"\"\""""
 
     user = f"""Organization: {org_name}
 Title tag: {title}
@@ -621,12 +707,10 @@ Site excerpt (first 1500 chars):
 Heuristic tier guess: {h_tier}
 Heuristic reason: {h_reason}
 
-Output JSON only. The outreach message should:
-- Address the decision maker by first name if known, else "Hi there"
-- Reference something specific from the org's mission (from the excerpt)
-- Make the suggested offer naturally, not as a pitch dump
-- End with a soft call to action (15-min chat)
-- Sound like a human, not a template"""
+{structure_block}
+
+Output JSON only. The outreach_message must follow the structure above
+EXACTLY, including the sign-off on its own line."""
 
     try:
         resp = client.messages.create(
